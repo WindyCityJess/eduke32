@@ -267,8 +267,14 @@ void CONFIG_SetDefaults(void)
     ud.config.MasterVolume    = 255;
     ud.config.FXVolume        = 255;
     ud.config.VoiceVolume     = 255;
+#ifdef MISTER_HYBRID
+    // MiSTer: a gamepad game; weighted aiming and view centering all the way
+    ud.config.JoystickAimWeight = 8;
+    ud.config.JoystickViewCentering = 8;
+#else
     ud.config.JoystickAimWeight = 4;
     ud.config.JoystickViewCentering = 4;
+#endif
     ud.config.JoystickAimAssist = 1;
     ud.config.MouseBias       = 0;
     ud.config.MusicDevice     = ASS_AutoDetect;
@@ -288,10 +294,18 @@ void CONFIG_SetDefaults(void)
     ud.crosshairscale         = 50;
     ud.default_skill          = 1;
     ud.democams               = 1;
+#ifdef MISTER_HYBRID
+    ud.detail                 = 2;  // MiSTer: the 3D view drawn at half size and doubled
+#else
     ud.detail                 = 0;
+#endif
     ud.display_bonus_screen   = 1;
     ud.drawweapon             = 1;
+#ifdef MISTER_HYBRID
+    ud.fov                    = 120; // MiSTer: the widest the menu allows
+#else
     ud.fov                    = 90;
+#endif
     ud.fta_on                 = 1;
     ud.god                    = 0;
     ud.hudontop               = 0;
@@ -331,6 +345,14 @@ void CONFIG_SetDefaults(void)
     ud.weaponscale            = 100;
     ud.weaponsway             = 1;
     ud.weaponswitch           = 3;  // new+empty
+    // MiSTer: A.W.O.L.'s options at its defaults (ADS toggles, subtitles on,
+    // weather normal, particles on, text speed normal, 3D models on)
+    ud.adsmode                = 0;
+    ud.subtitles              = 1;
+    ud.weather                = 2;
+    ud.particles              = 1;
+    ud.text_speed             = 2;
+    ud.perf_mdl               = 1;
 
     Bstrcpy(ud.rtsname, G_DefaultRtsFile());
 
@@ -623,7 +645,7 @@ void CONFIG_SetGameControllerDefaults()
 
 #ifdef MISTER_HYBRID
     // The core's joystick 1 (mister.h): its J1 buttons, the d-pad walking and
-    // turning, R2 fire and L2 the kick, L3 the run toggle and R3 the kick too.
+    // strafing, R2 fire and L2 the kick, L3 the run toggle and R3 the kick too.
     // A and B are only Menu OK and Menu Back.
     static GameControllerButtonSetting const misterButtons[] =
     {
@@ -640,8 +662,8 @@ void CONFIG_SetGameControllerDefaults()
         { (GameControllerButton)MISTER_CB_R3, gamefunc_Quick_Kick },
         { CONTROLLER_BUTTON_DPAD_UP, gamefunc_Move_Forward },
         { CONTROLLER_BUTTON_DPAD_DOWN, gamefunc_Move_Backward },
-        { CONTROLLER_BUTTON_DPAD_LEFT, gamefunc_Turn_Left },
-        { CONTROLLER_BUTTON_DPAD_RIGHT, gamefunc_Turn_Right },
+        { CONTROLLER_BUTTON_DPAD_LEFT, gamefunc_Strafe_Left },     // MiSTer: the d-pad strafes (Jess, 2026-11-19)
+        { CONTROLLER_BUTTON_DPAD_RIGHT, gamefunc_Strafe_Right },
     };
 
     static GameControllerDigitalAxisSetting const misterAxes[] =
@@ -656,9 +678,25 @@ void CONFIG_SetGameControllerDefaults()
     for (auto const & digitalAxis : misterAxes)
         digitalAxis.apply();
 
+    // A.W.O.L. names its own functions (awol_tokens.con): R2 aims down the sights (12,
+    // Fire stays on R) and L3 applies a bandage (35), where Duke's Fire and AutoRun were.
+    // g_gameType is known at the second CONFIG_ReadSetup, after the groups are loaded.
+    if (AWOL)
+    {
+        GameControllerDigitalAxisSetting const awolR2 = { CONTROLLER_AXIS_TRIGGERRIGHT, 1, 12 };
+        awolR2.apply();
+        GameControllerButtonSetting const awolL3 = { (GameControllerButton)MISTER_CB_L3, 35 };
+        awolL3.apply();
+    }
+
     ud.config.JoystickAimAssist     = 1;
+#ifdef MISTER_HYBRID
+    ud.config.JoystickAimWeight     = 8;
+    ud.config.JoystickViewCentering = 8;
+#else
     ud.config.JoystickAimWeight     = 4;
     ud.config.JoystickViewCentering = 4;
+#endif
     ud.config.controllerRumble = 1;
     return;
 #endif
@@ -716,8 +754,13 @@ void CONFIG_SetGameControllerDefaults()
         digitalAxis.apply();
 
     ud.config.JoystickAimAssist     = 1;
+#ifdef MISTER_HYBRID
+    ud.config.JoystickAimWeight     = 8;
+    ud.config.JoystickViewCentering = 8;
+#else
     ud.config.JoystickAimWeight     = 4;
     ud.config.JoystickViewCentering = 4;
+#endif
     ud.config.controllerRumble = 1;
 }
 

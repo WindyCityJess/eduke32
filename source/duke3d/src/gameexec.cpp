@@ -151,6 +151,76 @@ static inline void VM_DummySprite(void)
     vm.pData    = &dummy_actor.t_data[0];
 }
 
+#ifdef MISTER_HYBRID
+// MISTER_HYBRID_CONPROFILE=1: every 2 s the log gets the actors and the events whose
+// CON code took the most time (inclusive: an event run from an actor's code counts for
+// both), with the game's average update time and the last frame time. For the
+// slowdowns ("AWOL: large slowdown with 4 enemies in a room", 2026-11-18).
+static double  misterActorMs[MAXTILES];
+static int32_t misterActorCalls[MAXTILES];
+static double  misterEventMs[MAXEVENTS];
+static int32_t misterEventCalls[MAXEVENTS];
+static int     misterConProfile = -1;
+
+static inline int MiSTer_ConProfile(void)
+{
+    if (misterConProfile < 0)
+        misterConProfile = getenv("MISTER_HYBRID_CONPROFILE") ? atoi(getenv("MISTER_HYBRID_CONPROFILE")) : 0;
+    return misterConProfile;
+}
+
+void MiSTer_ConProfileLog(double updateMs, double frameMs)
+{
+    if (!MiSTer_ConProfile())
+        return;
+    static uint32_t last;
+    uint32_t const now = timerGetTicks();
+    if (now - last < 2000)
+        return;
+    last = now;
+
+    char buf[1536];
+    int len = 0;
+    double total = 0;
+    for (int i = 0; i < MAXTILES; i++)
+        total += misterActorMs[i];
+    len += Bsnprintf(buf + len, sizeof(buf) - len, "mister con: 2 s: actors %.0f ms:", total);
+    for (int n = 0; n < 8 && len < (int)sizeof(buf) - 64; n++)
+    {
+        int best = -1;
+        for (int i = 0; i < MAXTILES; i++)
+            if (misterActorMs[i] > 0 && (best < 0 || misterActorMs[i] > misterActorMs[best]))
+                best = i;
+        if (best < 0)
+            break;
+        len += Bsnprintf(buf + len, sizeof(buf) - len, " %s(%d) %.0f ms/%d", g_tileLabels[best] ? g_tileLabels[best] : "?",
+                         best, misterActorMs[best], misterActorCalls[best]);
+        misterActorMs[best] = 0;
+    }
+    total = 0;
+    for (int i = 0; i < MAXEVENTS; i++)
+        total += misterEventMs[i];
+    len += Bsnprintf(buf + len, sizeof(buf) - len, "; events %.0f ms:", total);
+    for (int n = 0; n < 6 && len < (int)sizeof(buf) - 64; n++)
+    {
+        int best = -1;
+        for (int i = 0; i < MAXEVENTS; i++)
+            if (misterEventMs[i] > 0 && (best < 0 || misterEventMs[i] > misterEventMs[best]))
+                best = i;
+        if (best < 0)
+            break;
+        len += Bsnprintf(buf + len, sizeof(buf) - len, " %s %.0f ms/%d", EventNames[best], misterEventMs[best], misterEventCalls[best]);
+        misterEventMs[best] = 0;
+    }
+    Bsnprintf(buf + len, sizeof(buf) - len, "; update avg %.1f ms, frame %.1f ms", updateMs, frameMs);
+    LOG_F(INFO, "%s", buf);
+    Bmemset(misterActorMs, 0, sizeof(misterActorMs));
+    Bmemset(misterActorCalls, 0, sizeof(misterActorCalls));
+    Bmemset(misterEventMs, 0, sizeof(misterEventMs));
+    Bmemset(misterEventCalls, 0, sizeof(misterEventCalls));
+}
+#endif
+
 // verification that the event actually exists happens elsewhere
 static FORCE_INLINE int32_t VM_EventInlineInternal__(int const eventNum, int const spriteNum, int const playerNum,
                                                        int const playerDist = -1, int32_t returnValue = 0)
@@ -186,7 +256,17 @@ static FORCE_INLINE int32_t VM_EventInlineInternal__(int const eventNum, int con
     if ((unsigned)playerNum >= (unsigned)g_mostConcurrentPlayers)
         vm.pPlayer = g_player[0].ps;
 
+#ifdef MISTER_HYBRID
+    double const misterT0 = MiSTer_ConProfile() ? timerGetFractionalTicks() : 0;
+#endif
     VM_Execute(true);
+#ifdef MISTER_HYBRID
+    if (MiSTer_ConProfile())
+    {
+        misterEventMs[eventNum] += timerGetFractionalTicks() - misterT0;
+        misterEventCalls[eventNum]++;
+    }
+#endif
     vm.flags &= ~VM_TERMINATE;
 
     if (vm.flags & VM_KILL)
@@ -3680,6 +3760,11 @@ breakfor:
 
             vInstruction(CON_NULLOP): insptr++; dispatch();
 
+            vInstruction(CON_QUITGAME):   // MiSTer: Electric Highways' menu leaves the game with it
+                insptr++;
+                G_GameExit("");
+                dispatch();
+
             vInstruction(CON_ADDAMMO):
                 insptr++;
                 {
@@ -3722,6 +3807,8 @@ breakfor:
 #ifndef EDUKE32_STANDALONE
                 if (!FURY)
                     A_SpawnGlass(vm.spriteNum, *insptr++);
+                else
+                    insptr++;
 #else
                 insptr++;
 #endif
@@ -3737,6 +3824,8 @@ breakfor:
                         int const numShards = Gv_GetVar(*insptr++);
                         A_SpawnWallGlass(vm.spriteNum, wallNum, numShards);
                     }
+                    else
+                        insptr += 2;
 #else
                     Gv_GetVar(*insptr++);
                     Gv_GetVar(*insptr++);
@@ -3754,6 +3843,8 @@ breakfor:
                         int const numShards = Gv_GetVar(*insptr++);
                         A_SpawnRandomGlass(vm.spriteNum, wallNum, numShards);
                     }
+                    else
+                        insptr += 2;
 #else
                     Gv_GetVar(*insptr++);
                     Gv_GetVar(*insptr++);
@@ -3771,6 +3862,8 @@ breakfor:
                         int const numShards = Gv_GetVar(*insptr++);
                         A_SpawnCeilingGlass(vm.spriteNum, sectNum, numShards);
                     }
+                    else
+                        insptr += 2;
 #else
                     Gv_GetVar(*insptr++);
                     Gv_GetVar(*insptr++);
@@ -4740,7 +4833,7 @@ breakfor:
                     NEG_ALPHA_TO_BLEND(alpha, blendidx, v.orientation);
 
                     rotatesprite_(v.pos.x, v.pos.y, v.pos.z, v.ang, v.tilenum, v.shade, v.pal, 2 | (v.orientation & (ROTATESPRITE_MAX - 1)), alpha,
-                                  blendidx, bound[0].x, bound[0].y, bound[1].x, bound[1].y);
+                                  blendidx, MISTER_CON_X1(bound[0].x), MISTER_CON_Y1(bound[0].y), MISTER_CON_X2(bound[1].x), MISTER_CON_Y2(bound[1].y));
                     dispatch();
                 }
 
@@ -4763,7 +4856,7 @@ breakfor:
                     int32_t const z = (VM_DECODE_INST(tw) == CON_GAMETEXTZ) ? Gv_GetVar(*insptr++) : 65536;
 
                     G_PrintGameText(v.tilenum, v.pos.x >> 1, v.pos.y, apStrings[v.nQuote], v.shade, v.pal, v.orientation & (ROTATESPRITE_MAX - 1),
-                                    v.bound[0].x, v.bound[0].y, v.bound[1].x, v.bound[1].y, z, 0);
+                                    MISTER_CON_X1(v.bound[0].x), MISTER_CON_Y1(v.bound[0].y), MISTER_CON_X2(v.bound[1].x), MISTER_CON_Y2(v.bound[1].y), z, 0);
                     dispatch();
                 }
 
@@ -4786,8 +4879,8 @@ breakfor:
 
                     // NOTE: '-' not taken into account, but we have rotatesprite() bound check now anyway
 
-                    G_DrawTXDigiNumZ(v.tilenum, v.pos.x, v.pos.y, v.nQuote, v.shade, v.pal, v.orientation & (ROTATESPRITE_MAX - 1), v.bound[0].x,
-                                     v.bound[0].y, v.bound[1].x, v.bound[1].y, nZoom);
+                    G_DrawTXDigiNumZ(v.tilenum, v.pos.x, v.pos.y, v.nQuote, v.shade, v.pal, v.orientation & (ROTATESPRITE_MAX - 1), MISTER_CON_X1(v.bound[0].x),
+                                     MISTER_CON_Y1(v.bound[0].y), MISTER_CON_X2(v.bound[1].x), MISTER_CON_Y2(v.bound[1].y), nZoom);
                     dispatch();
                 }
 
@@ -4838,7 +4931,7 @@ breakfor:
 
                     G_ScreenText(v.tilenum, v.v.x, v.v.y, v.v.z, v.blockangle, v.charangle, apStrings[v.nQuote], v.shade, v.pal,
                                  2 | (v.orientation & (ROTATESPRITE_MAX - 1)), v.alpha, v.spacing.x, v.spacing.y, v.between.x, v.between.y, v.nFlags,
-                                 v.bound[0].x, v.bound[0].y, v.bound[1].x, v.bound[1].y);
+                                 MISTER_CON_X1(v.bound[0].x), MISTER_CON_Y1(v.bound[0].y), MISTER_CON_X2(v.bound[1].x), MISTER_CON_Y2(v.bound[1].y));
                     dispatch();
                 }
 
@@ -5292,6 +5385,8 @@ breakfor:
                                 sprite[spriteNum].pal  = vm.pSprite->pal;
                             }
                     }
+                    else
+                        insptr++;
 #else
                     insptr++;
 #endif
@@ -6525,7 +6620,7 @@ breakfor:
 
                     Gv_FillWithVars(v);
 
-                    renderDrawLine(v.pos[0].x, v.pos[0].y, v.pos[1].x, v.pos[1].y, v.index);
+                    renderDrawLine(MISTER_CON_X1(v.pos[0].x), MISTER_CON_Y1(v.pos[0].y), MISTER_CON_X1(v.pos[1].x), MISTER_CON_Y1(v.pos[1].y), v.index);
                 }
                 dispatch();
 
@@ -6543,7 +6638,7 @@ breakfor:
                     palette_t const p
                     = { (uint8_t)(v.rgb & 0xFF), (uint8_t)((v.rgb >> 8) & 0xFF), (uint8_t)((v.rgb >> 16) & 0xFF), (uint8_t)v.index };
 
-                    drawlinergb(v.pos[0].x, v.pos[0].y, v.pos[1].x, v.pos[1].y, p);
+                    drawlinergb(MISTER_CON_X1(v.pos[0].x), MISTER_CON_Y1(v.pos[0].y), MISTER_CON_X1(v.pos[1].x), MISTER_CON_Y1(v.pos[1].y), p);
                 }
                 dispatch();
 
@@ -6964,6 +7059,8 @@ void VM_UpdateAnim(int const spriteNum, int32_t * const pData)
 // NORECURSE
 void A_Execute(int const spriteNum, int const playerNum, int const playerDist)
 {
+    MISTER_RENDER_POLL();
+    MISTER_TRACE(mainActor, spriteNum);
     // for some reason this is faster than using the C++ syntax; e.g vm = vmstate_t{ ... }
     vmstate_t const tempvm
     = { spriteNum, playerNum, playerDist, 0, &sprite[spriteNum], &actor[spriteNum].t_data[0], g_player[playerNum].ps, &actor[spriteNum] };
@@ -7012,7 +7109,18 @@ void A_Execute(int const spriteNum, int const playerNum, int const playerDist)
     VM_UpdateAnim(vm.spriteNum, vm.pData);
 
     insptr = 4 + (g_tile[vm.pSprite->picnum].execPtr);
+#ifdef MISTER_HYBRID
+    int const    misterPic = vm.pSprite->picnum;
+    double const misterT0  = MiSTer_ConProfile() ? timerGetFractionalTicks() : 0;
+#endif
     VM_Execute(true);
+#ifdef MISTER_HYBRID
+    if (MiSTer_ConProfile())
+    {
+        misterActorMs[misterPic] += timerGetFractionalTicks() - misterT0;
+        misterActorCalls[misterPic]++;
+    }
+#endif
     vm.flags &= ~VM_TERMINATE;
     insptr = NULL;
 
@@ -7107,9 +7215,9 @@ void G_SaveMapState(void)
 
     save->numsprites = Numsprites;
     save->tailspritefree = tailspritefree;
-    Bmemcpy(&save->headspritesect[0],&headspritesect[0],sizeof(headspritesect));
-    Bmemcpy(&save->prevspritesect[0],&prevspritesect[0],sizeof(prevspritesect));
-    Bmemcpy(&save->nextspritesect[0],&nextspritesect[0],sizeof(nextspritesect));
+    Bmemcpy(&save->headspritesect[0],&headspritesect[0],sizeof(save->headspritesect));
+    Bmemcpy(&save->prevspritesect[0],&prevspritesect[0],sizeof(save->prevspritesect));
+    Bmemcpy(&save->nextspritesect[0],&nextspritesect[0],sizeof(save->nextspritesect));
     Bmemcpy(&save->headspritestat[0],&headspritestat[0],sizeof(headspritestat));
     Bmemcpy(&save->prevspritestat[0],&prevspritestat[0],sizeof(prevspritestat));
     Bmemcpy(&save->nextspritestat[0],&nextspritestat[0],sizeof(nextspritestat));
@@ -7169,11 +7277,7 @@ void G_SaveMapState(void)
             Bmemcpy(&save->vars[i][0], aGameVars[i].pValues, sizeof(intptr_t) * MAXPLAYERS);
         }
         else if (aGameVars[i].flags & GAMEVAR_PERACTOR)
-        {
-            if (!save->vars[i])
-                save->vars[i] = (intptr_t *)Xaligned_alloc(ACTOR_VAR_ALIGNMENT, MAXSPRITES * sizeof(intptr_t));
-            Bmemcpy(&save->vars[i][0], aGameVars[i].pValues, sizeof(intptr_t) * MAXSPRITES);
-        }
+            save->vars[i] = Gv_PackActorVars(save->vars[i], aGameVars[i].pValues);
         else
             save->vars[i] = (intptr_t *)aGameVars[i].global;
     }
@@ -7229,9 +7333,9 @@ void G_RestoreMapState(void)
         }
         Numsprites = pSavedState->numsprites;
         tailspritefree = pSavedState->tailspritefree;
-        Bmemcpy(&headspritesect[0],&pSavedState->headspritesect[0],sizeof(headspritesect));
-        Bmemcpy(&prevspritesect[0],&pSavedState->prevspritesect[0],sizeof(prevspritesect));
-        Bmemcpy(&nextspritesect[0],&pSavedState->nextspritesect[0],sizeof(nextspritesect));
+        Bmemcpy(&headspritesect[0],&pSavedState->headspritesect[0],sizeof(pSavedState->headspritesect));
+        Bmemcpy(&prevspritesect[0],&pSavedState->prevspritesect[0],sizeof(pSavedState->prevspritesect));
+        Bmemcpy(&nextspritesect[0],&pSavedState->nextspritesect[0],sizeof(pSavedState->nextspritesect));
         Bmemcpy(&headspritestat[0],&pSavedState->headspritestat[0],sizeof(headspritestat));
         Bmemcpy(&prevspritestat[0],&pSavedState->prevspritestat[0],sizeof(prevspritestat));
         Bmemcpy(&nextspritestat[0],&pSavedState->nextspritestat[0],sizeof(nextspritestat));
@@ -7289,7 +7393,7 @@ void G_RestoreMapState(void)
             {
                 if (!pSavedState->vars[i])
                     continue;
-                Bmemcpy(aGameVars[i].pValues, pSavedState->vars[i], sizeof(intptr_t) * MAXSPRITES);
+                Gv_UnpackActorVars(aGameVars[i].pValues, pSavedState->vars[i]);
             }
             else
                 aGameVars[i].global = (intptr_t)pSavedState->vars[i];

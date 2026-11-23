@@ -428,6 +428,38 @@ void artReadManifest(buildvfs_kfd const fil, artheader_t * const local)
     DO_FREE_AND_NULL(tilesizy);
 }
 
+#ifdef MISTER_HYBRID
+// ART inside a GRP is normally read whole at startup and kept LZ4-compressed
+// in memory, since a deflated zip cannot be seeked cheaply. The MiSTer's
+// fury.grp is stored uncompressed, so its tiles are read on demand like loose
+// ART files: ~9 s less startup and ~150 MB less memory with Ion Fury.
+// MISTER_HYBRID_ARTPRELOAD=1 restores the preload (needed for a deflated GRP).
+static int misterArtPreload(void)
+{
+    static int preload = -1;
+    if (preload < 0)
+    {
+        char const *env = getenv("MISTER_HYBRID_ARTPRELOAD");
+        preload = env ? atoi(env) != 0 : 0;
+        LOG_F(INFO, "mister: ART tiles in the GRP are %s", preload ? "preloaded into memory (MISTER_HYBRID_ARTPRELOAD=1)"
+                                                                   : "read on demand (MISTER_HYBRID_ARTPRELOAD=0)");
+    }
+    return preload;
+}
+
+// A deflated ART entry cannot be seeked cheaply (kzseek() inflates from the
+// start of the entry, and every read of another file in the zip loses the
+// place): it is preloaded whatever MISTER_HYBRID_ARTPRELOAD says. AWOL's and
+// DukePlus' GRPs are zips with a deflated ART.
+static int misterArtDeflated(buildvfs_kfd fil, char const *fn)
+{
+    if (!cache1d_file_deflated(fil))
+        return 0;
+    LOG_F(INFO, "mister: %s is a deflated zip entry: preloaded into memory", fn);
+    return 1;
+}
+#endif
+
 void artPreloadFile(buildvfs_kfd const fil, artheader_t * const local)
 {
     char *buffer = NULL;
@@ -549,7 +581,11 @@ static int32_t artReadIndexedFile(int32_t tilefilei)
         artReadManifest(fil, &local);
 
 #ifndef USE_PHYSFS
-        if (cache1d_file_fromzip(fil))
+        if (cache1d_file_fromzip(fil)
+#ifdef MISTER_HYBRID
+            && (permap || misterArtPreload() || misterArtDeflated(fil, fn))
+#endif
+            )
 #else
         if (1)
 #endif
@@ -643,6 +679,9 @@ bool tileLoad(int16_t tileNum)
         g_cache.allocateBlock(&waloff[tileNum], dasiz, &walock[tileNum]);
     }
 
+#ifdef MISTER_HYBRID
+    { extern int32_t g_misterTileLoads; g_misterTileLoads++; }
+#endif
     tileLoadData(tileNum, dasiz, (char *) waloff[tileNum]);
 
 #ifdef USE_OPENGL

@@ -109,7 +109,7 @@ static uint64_t profFrame[MPROF_NUM], profSum[MPROF_NUM], profMax[MPROF_NUM];
 static uint64_t profWorkSum, profWorkMax, profLastShown;
 static int profTics, profFrames, profMissed, profFieldsMissed;
 static uint32_t profLastField;
-static char const *const profNames[MPROF_NUM] = { "tics", "drawrooms", "rooms", "masks", "spriteanim", "hud", "copy", "present" };
+static char const *const profNames[MPROF_NUM] = { "tics", "drawrooms", "rooms", "masks", "spriteanim", "hud", "copy", "present", "rwait", "rthread" };
 
 void misterProfAdd(int part, uint64_t ns)
 {
@@ -2791,6 +2791,17 @@ void handleevents_updatemousestate(uint8_t state)
 //   returns !0 if there was an important event worth checking (like quitting)
 //
 
+#ifdef MISTER_HYBRID
+// MISTER_HYBRID_PADLOG=1: log every joystick button and trigger edge (the pad test)
+static int misterPadLog(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MISTER_HYBRID_PADLOG") ? atoi(getenv("MISTER_HYBRID_PADLOG")) : 0;
+    return on;
+}
+#endif
+
 int32_t handleevents_sdlcommon(SDL_Event *ev)
 {
     switch (ev->type)
@@ -2900,6 +2911,19 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
             if (appactive && ev->jaxis.axis < joystick.numAxes)
             {
                 joystick.pAxis[ev->jaxis.axis] = ev->jaxis.value;
+#ifdef MISTER_HYBRID
+                // MISTER_HYBRID_PADLOG=1: the trigger axes (4, 5) as pressed/released, for the pad test
+                if (misterPadLog() && ev->jaxis.axis >= 4 && ev->jaxis.axis < 8)
+                {
+                    static int misterAxisDown[8];
+                    int const down = ev->jaxis.value > 16384;
+                    if (down != misterAxisDown[ev->jaxis.axis])
+                    {
+                        misterAxisDown[ev->jaxis.axis] = down;
+                        initprintf("mister pad: joystick axis %d %s\n", ev->jaxis.axis, down ? "pressed" : "released");
+                    }
+                }
+#endif
             }
             break;
 
@@ -2943,6 +2967,10 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
                     joystick.bits |= 1 << ev->jbutton.button;
                 else
                     joystick.bits &= ~(1 << ev->jbutton.button);
+#ifdef MISTER_HYBRID
+                if (misterPadLog())
+                    initprintf("mister pad: joystick button %d %s\n", ev->jbutton.button, ev->jbutton.state == SDL_PRESSED ? "down" : "up");
+#endif
 
 #ifdef GEKKO
                 if (ev->jbutton.button == 0) // WII_A
@@ -3272,6 +3300,20 @@ int32_t handleevents(void)
         {
             auto dorumble = [](uint16_t const low, uint16_t const high, uint32_t const time)
             {
+#ifdef MISTER_HYBRID
+                // straight to the library: SDL skips a request equal to the
+                // last one and stops on its own timer, which left rumbles unheard
+                if (MH_IsOpen())
+                {
+                    int const any = MH_Rumble(low >> 8, high >> 8);
+                    static int logged = -1;
+                    if (logged < 0)
+                        logged = getenv("MISTER_HYBRID_RUMBLELOG") != NULL;
+                    if (logged)
+                        LOG_F(INFO, "mister: rumble %d/%d to the pads: %s", low >> 8, high >> 8, any ? "a pad with rumble" : "no pad with rumble");
+                    return;
+                }
+#endif
                 if (controller)
                     SDL_GameControllerRumble(controller, low, high, time);
                 else

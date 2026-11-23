@@ -1712,6 +1712,17 @@ int A_ShootWithZvel(int const spriteNum, int const projecTile, int const forceZv
         shootAng = fix16_to_int(pPlayer->q16ang);
 
         pPlayer->crack_time = PCRACKTIME;
+
+#ifdef MISTER_HYBRID
+        // Ion Fury shoots from its scripts, past P_DoWeaponRumble(): the recoil here
+        if (FURY && playerNum == myconnectindex)
+        {
+            int const base = A_CheckSpriteTileFlags(projecTile, SFLAG_PROJECTILE) ? Proj_GetProjectile(projecTile)->extra
+                                                                                   : G_DefaultActorHealthForTile(projecTile);
+            int const dmg = clamp(base, FF_WEAPON_DMG_MIN, FF_WEAPON_DMG_MAX);
+            I_AddForceFeedback(dmg << FF_WEAPON_DMG_SCALE, dmg << FF_WEAPON_DMG_SCALE, max<int>(FF_WEAPON_MAX_TIME, dmg << FF_WEAPON_TIME_SCALE));
+        }
+#endif
     }
     else
     {
@@ -2297,7 +2308,19 @@ void P_DisplayWeapon(void)
     hudweap.count       = *weaponFrame;
     hudweap.lookhalfang = pPlayer->look_ang >> 1;
 
+#ifdef MISTER_HYBRID
+    // AWOL draws its weapon hands for a 200-line screen (y up to 205) but its HUD and
+    // cutscenes for the 240-line space of its draw_yxaspect 54613: the draws of its weapon
+    // event keep the plain aspect (engine.cpp dorotspr_mister), or the hands float a sixth up
+    extern int32_t mister2DForcePlain;
+    mister2DForcePlain = AWOL ? 1 : 0;
+    int misterWeaponEvent;   // no initializer: a goto enddisplayweapon above jumps past this
+    misterWeaponEvent = VM_OnEvent(EVENT_DISPLAYWEAPON, pPlayer->i, screenpeek);
+    mister2DForcePlain = 0;
+    if (misterWeaponEvent == 0)
+#else
     if (VM_OnEvent(EVENT_DISPLAYWEAPON, pPlayer->i, screenpeek) == 0)
+#endif
     {
 #ifndef EDUKE32_STANDALONE
         int const quickKickFrame = 14 - pPlayer->quick_kick;
@@ -2314,7 +2337,11 @@ void P_DisplayWeapon(void)
                                  weaponShade, weaponBits | 4 | DRAWEAP_CENTER, weaponPal, W_KNEE2);
         }
 
-        if (!FURY && sprite[pPlayer->i].xrepeat < 40)
+        if (WW2GI && (quickKickFrame != 14 || pPlayer->last_quick_kick) && ud.drawweapon == 1)
+        {
+            // MiSTer: the knife alone, the gun is away while it plays (Jess, 2026-11-19)
+        }
+        else if (!FURY && sprite[pPlayer->i].xrepeat < 40)
         {
             static int32_t fistPos;
 
@@ -3234,6 +3261,24 @@ void P_GetInput(int const playerNum)
     }
 
     CONTROL_GetInput(&info);
+
+#ifdef MISTER_HYBRID
+    // MISTER_HYBRID_PADLOG=1: every game function edge, by name (the pad test)
+    {
+        static int misterPadLog = -1;
+        if (misterPadLog < 0)
+            misterPadLog = getenv("MISTER_HYBRID_PADLOG") ? atoi(getenv("MISTER_HYBRID_PADLOG")) : 0;
+        if (misterPadLog)
+        {
+            static uint64_t misterLastButtons;
+            uint64_t const misterChanged = CONTROL_ButtonState ^ misterLastButtons;
+            for (int f = 0; f < NUMGAMEFUNCTIONS; f++)
+                if (misterChanged & ((uint64_t)1 << f))
+                    LOG_F(INFO, "mister pad: gamefunc_%s %s", gamefunctions[f], BUTTON(f) ? "down" : "up");
+            misterLastButtons = CONTROL_ButtonState;
+        }
+    }
+#endif
 
     if (ud.config.MouseBias)
     {
@@ -5189,6 +5234,15 @@ void P_ProcessInput(int playerNum)
         pPlayer->inv_amount[GET_SHIELD] = 0;
     }
 
+#ifdef MISTER_HYBRID
+    // Ion Fury takes the damage in its scripts (EVENT_INCURDAMAGE returns -1,
+    // past the rumble in P_IncurDamage()): rumble for the health lost this tick
+    if (FURY && playerNum == myconnectindex && pSprite->extra > 0 && pSprite->extra < pPlayer->last_extra)
+    {
+        int const dmg = pPlayer->last_extra - pSprite->extra;
+        I_AddForceFeedback(dmg << FF_PLAYER_DMG_SCALE, dmg << FF_PLAYER_DMG_SCALE, dmg << FF_PLAYER_TIME_SCALE);
+    }
+#endif
     pPlayer->last_extra = pSprite->extra;
     pPlayer->loogcnt    = (pPlayer->loogcnt > 0) ? pPlayer->loogcnt - 1 : 0;
 
