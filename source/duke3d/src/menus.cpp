@@ -519,7 +519,9 @@ static MenuEntry_t *MEL_GAMESETUP_AWOL[] = { // MiSTer: A.W.O.L.'s Game Setup
     &ME_GAMESETUP_CHEATS,
 };
 static MenuEntry_t *MEL_GAMESETUP[] = {
-    &ME_ADULTMODE,
+#ifndef MISTER_HYBRID
+    &ME_ADULTMODE,   // MiSTer: no Parental Lock on the console (Jess, 2026-11-24): its password wants a keyboard
+#endif
 #if defined STARTUP_SETUP_WINDOW && !defined EDUKE32_RETAIL_MENU
     &ME_GAMESETUP_STARTWIN,
 #endif
