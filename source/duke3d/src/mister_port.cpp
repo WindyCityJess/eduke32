@@ -455,6 +455,18 @@ static void misterCrashHandler(int sig, siginfo_t *info, void *ctx)
         }
     }
 #endif
+    // The CON interpreter's place, for a crash in VM_Execute(): the instruction being run (g_tw
+    // carries its keyword and CON line), the event and the actor. A word that is not an opcode (a
+    // script pointer gone wrong) sends the dispatch jump table to a wild pc (A.W.O.L., 2026-11-24).
+    {
+        char buf[200];
+        int const inst = VM_DECODE_INST(g_tw);
+        int n = snprintf(buf, sizeof buf, "mister crash: con line %d keyword %s (%d) event %d sprite %d",
+                         VM_DECODE_LINE_NUMBER(g_tw), VM_GetKeywordForID(inst), inst, g_currentEvent, vm.spriteNum);
+        if (vm.pSprite != NULL && (unsigned)vm.spriteNum < MAXSPRITES && n > 0 && n < (int)sizeof buf)
+            n += snprintf(buf + n, sizeof buf - n, " picnum %d statnum %d sect %d", vm.pSprite->picnum, vm.pSprite->statnum, vm.pSprite->sectnum);
+        if (n > 0 && n < (int)sizeof buf - 1) { buf[n++] = (char)10; w = write(2, buf, n); }
+    }
     (void)w;
     signal(sig, SIG_DFL);
     raise(sig);
